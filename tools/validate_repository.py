@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import tomllib
 from pathlib import Path
 
 
@@ -113,10 +114,28 @@ def main() -> int:
                     if not (ROOT / "keys" / f"{authority}.bikey").is_file():
                         errors.append(f"keys/{authority}.bikey: committed public key is missing")
 
-    project = (ROOT / ".hemtt" / "project.toml").read_text(encoding="utf-8")
+    project_path = ROOT / ".hemtt" / "project.toml"
+    project = project_path.read_text(encoding="utf-8")
     for pattern in REQUIRED_PACKAGE_EXCLUDES:
         if f'"{pattern}"' not in project:
             errors.append(f".hemtt/project.toml: missing package exclude {pattern}")
+
+    try:
+        with project_path.open("rb") as project_file:
+            project_config = tomllib.load(project_file)
+        version_config = project_config["version"]
+        project_version = ".".join(
+            str(version_config[field]) for field in ("major", "minor", "patch")
+        )
+    except (KeyError, TypeError, ValueError, tomllib.TOMLDecodeError) as error:
+        errors.append(f".hemtt/project.toml: invalid version: {error}")
+    else:
+        mod_versions = re.findall(
+            r"\b\d+\.\d+\.\d+\b",
+            (ROOT / "mod.cpp").read_text(encoding="utf-8"),
+        )
+        if mod_versions and set(mod_versions) != {project_version}:
+            errors.append(f"mod.cpp: version must match HEMTT {project_version}")
 
     if errors:
         for error in errors:
