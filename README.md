@@ -1,5 +1,7 @@
 # Arma 3 mod template
 
+[![CI](https://github.com/Sam-DarkBall-Mods/mod-template/actions/workflows/ci.yml/badge.svg)](https://github.com/Sam-DarkBall-Mods/mod-template/actions/workflows/ci.yml)
+
 This is the starting point for new Sam-DarkBall-Mods projects. It contains the
 HEMTT config, CI workflows, release checks, licenses and the basic repository
 tests used by the existing mods.
