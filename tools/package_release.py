@@ -10,6 +10,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_ROOT = ROOT / ".hemttout" / "release"
 ARCHIVE_ROOT = ROOT / "releases"
+LEGAL_FILES = (
+    (ROOT / "LICENSE", Path("LICENSE")),
+    (ROOT / "LICENSES" / "APL-SA.txt", Path("ASSET_LICENSE.txt")),
+    (ROOT / "THIRD_PARTY_NOTICES.md", Path("THIRD_PARTY_NOTICES.txt")),
+)
+LEGAL_DESTINATIONS = {destination.as_posix() for _, destination in LEGAL_FILES}
 
 
 def release_mod_folder() -> str:
@@ -17,6 +23,22 @@ def release_mod_folder() -> str:
         project = tomllib.load(project_file)
     folder = project["hemtt"]["release"]["folder"]
     return folder if folder.startswith("@") else f"@{folder}"
+
+
+def collect_release_files(root: Path) -> list[Path]:
+    files: list[Path] = []
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root)
+        if path.suffix.lower() == ".md":
+            continue
+        if relative.parts[0] == "LICENSES":
+            continue
+        if relative.as_posix() in LEGAL_DESTINATIONS:
+            continue
+        files.append(path)
+    return sorted(files)
 
 
 def write_archive(archive: Path, files: list[Path], mod_folder: str) -> None:
@@ -31,6 +53,8 @@ def write_archive(archive: Path, files: list[Path], mod_folder: str) -> None:
         for path in files:
             relative = path.relative_to(RELEASE_ROOT)
             output.write(path, Path(mod_folder) / relative)
+        for source, destination in LEGAL_FILES:
+            output.write(source, Path(mod_folder) / destination)
     temporary.replace(archive)
 
 
@@ -44,7 +68,12 @@ def main() -> int:
         print("ERROR: HEMTT release archives not found", file=sys.stderr)
         return 1
 
-    files = sorted(path for path in RELEASE_ROOT.rglob("*") if path.is_file())
+    for source, _ in LEGAL_FILES:
+        if not source.is_file():
+            print(f"ERROR: Legal file not found: {source}", file=sys.stderr)
+            return 1
+
+    files = collect_release_files(RELEASE_ROOT)
     if not files:
         print("ERROR: HEMTT release folder is empty", file=sys.stderr)
         return 1
@@ -52,7 +81,7 @@ def main() -> int:
     mod_folder = release_mod_folder()
     for archive in archives:
         write_archive(archive, files, mod_folder)
-        print(f"Packed {archive.name} with {len(files)} file(s).")
+        print(f"Packed {archive.name} with {len(files) + len(LEGAL_FILES)} file(s).")
 
     return 0
 

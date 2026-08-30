@@ -75,7 +75,7 @@ jobs:
           version: "v1.21.0"
 
       - name: Set up Arma 3 Tools
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request'
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.BUILD_ASSETS_TOKEN }}
@@ -113,11 +113,11 @@ jobs:
         run: hemtt check
 
       - name: HEMTT build
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name != 'pull_request'
         run: hemtt build
 
       - name: HEMTT build without binarization
-        if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+        if: github.event_name == 'pull_request'
         run: hemtt build --no-bin
 
       - name: Upload Windows build

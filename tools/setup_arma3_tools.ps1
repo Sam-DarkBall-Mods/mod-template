@@ -4,11 +4,15 @@ $toolsRepository = "Sam-DarkBall-Mods/build-assets"
 $toolsTag = "arma3-tools-2026-08"
 $toolsAsset = "arma3-tools.zip"
 $toolsSha256 = "9146a385ee16cf0cc983c88e12e52540417725c597f426929d14f62fea35a091"
+$referenceAsset = "arma3-reference-2026-08.zip"
+$referenceSha256 = "a7a5f7560b0d967f56a741e62d4b71747b1c383619867e562892906171718527"
 $registryUrl = "https://raw.githubusercontent.com/arma-actions/arma3-tools/7a1666b84a58503702f56319d8ffa975ec8a463e/arma3tools.reg"
-$registrySha256 = "f8443c98233e6611ccc46265d06d02558e8c25796d38224b236b2805cd8cc708"
+$registrySha256 = "d0f1f01a8d2c3208fe925934db97d3d945e1996f1d38f28d021e74a87d19c334"
 $toolsRoot = "C:\arma3tools"
+$projectRoot = Split-Path $PSScriptRoot -Parent
 $downloadRoot = Join-Path $env:RUNNER_TEMP "arma3tools-setup"
 $archivePath = Join-Path $downloadRoot $toolsAsset
+$referencePath = Join-Path $downloadRoot $referenceAsset
 $registryPath = Join-Path $downloadRoot "arma3tools.reg"
 
 if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
@@ -28,6 +32,14 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to download Arma 3 Tools"
     }
+
+    & gh release download $toolsTag `
+        --repo $toolsRepository `
+        --pattern $referenceAsset `
+        --dir $downloadRoot
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to download Arma 3 reference data"
+    }
     $env:GH_TOKEN = $null
 
     $archiveHash = (Get-FileHash $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -35,7 +47,13 @@ try {
         throw "Arma 3 Tools SHA-256 mismatch"
     }
 
+    $referenceHash = (Get-FileHash $referencePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($referenceHash -ne $referenceSha256) {
+        throw "Arma 3 reference data SHA-256 mismatch"
+    }
+
     Expand-Archive -Path $archivePath -DestinationPath $toolsRoot
+    Expand-Archive -Path $referencePath -DestinationPath $projectRoot
 
     $requiredFiles = @(
         "AddonBuilder\AddonBuilder.exe",
@@ -47,6 +65,27 @@ try {
     foreach ($relativePath in $requiredFiles) {
         if (-not (Test-Path (Join-Path $toolsRoot $relativePath))) {
             throw "Missing Arma 3 Tools file: $relativePath"
+        }
+    }
+
+    $requiredReferenceFiles = @(
+        "a3\air_f_heli\heli_transport_04\data\heli_transport_04_glass.rvmat",
+        "a3\air_f_heli\heli_transport_04\data\heli_transport_04_glass_ca.paa",
+        "a3\data_f\default_alpha.rvmat",
+        "a3\data_f\destruct\default_destruct_exterior.rvmat",
+        "a3\data_f\inter_opt.rvmat",
+        "a3\data_f\penetration\metal.rvmat",
+        "a3\data_f\penetration\metal_plate.rvmat",
+        "a3\data_f\penetration\metal_plate_thin.rvmat",
+        "a3\data_f\penetration\plastic.rvmat",
+        "a3\data_f\penetration\tyre.rvmat",
+        "a3\soft_f_orange\van_02\data\van_tire_cover.rvmat",
+        "a3\soft_f_orange\van_02\data\van_tire_cover_co.paa",
+        "a3\weapons_f\reticle\data\optics_lcd_ca.paa"
+    )
+    foreach ($relativePath in $requiredReferenceFiles) {
+        if (-not (Test-Path (Join-Path $projectRoot $relativePath))) {
+            throw "Missing Arma 3 reference file: $relativePath"
         }
     }
 
