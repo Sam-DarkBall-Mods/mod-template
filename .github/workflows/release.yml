@@ -54,6 +54,8 @@ jobs:
 
       - name: Set up HEMTT
         uses: arma-actions/hemtt@a0570ddd80d2b7be9c0f052494c0f700b42668dd # v1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         with:
           version: "v1.21.0"
 
