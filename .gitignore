@@ -1,11 +1,19 @@
 .DS_Store
 Thumbs.db
+*.bak
+*.bak.*
+*.back.*
+*.tmp
+*.orig
+*.rej
+* - Copy.*
 .hemttout/
 releases/
 @*/
 *.pbo
 *.bisign
 *.bikey
+!/keys/*.bikey
 *.biprivatekey
 *.hemttprivatekey
 *.zip

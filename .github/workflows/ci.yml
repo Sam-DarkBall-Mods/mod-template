@@ -28,8 +28,11 @@ jobs:
 
       - name: Set up HEMTT
         uses: arma-actions/hemtt@a0570ddd80d2b7be9c0f052494c0f700b42668dd # v1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         with:
           annotate: true
+          version: "v1.21.0"
 
       - name: Validate repository
         run: python -B tools/validate_repository.py
@@ -54,8 +57,6 @@ jobs:
   windows:
     name: Windows / HEMTT
     runs-on: windows-latest
-    env:
-      ARMA3_TOOLS_URL: ${{ secrets.ARMA3_TOOLS_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -67,14 +68,18 @@ jobs:
 
       - name: Set up HEMTT
         uses: arma-actions/hemtt@a0570ddd80d2b7be9c0f052494c0f700b42668dd # v1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         with:
           annotate: true
+          version: "v1.21.0"
 
       - name: Set up Arma 3 Tools
-        if: env.ARMA3_TOOLS_URL != ''
-        uses: arma-actions/arma3-tools@7a1666b84a58503702f56319d8ffa975ec8a463e # master 2025-02-04
-        with:
-          toolsUrl: ${{ secrets.ARMA3_TOOLS_URL }}
+        if: github.event_name != 'pull_request'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.BUILD_ASSETS_TOKEN }}
+        run: ./tools/setup_arma3_tools.ps1
 
       - name: Validate repository
         run: python -B tools/validate_repository.py
@@ -82,15 +87,37 @@ jobs:
       - name: Run tests
         run: python -B -m unittest discover -s tests -p "test_*.py" -v
 
+      - name: Validate release scripts
+        shell: pwsh
+        run: |
+          Get-ChildItem tools -Filter *.py | ForEach-Object {
+              python -m py_compile $_.FullName
+              if ($LASTEXITCODE -ne 0) { throw "Invalid Python: $($_.Name)" }
+          }
+
+          Get-ChildItem tools -Filter *.ps1 | ForEach-Object {
+              $tokens = $null
+              $parseErrors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile(
+                  $_.FullName,
+                  [ref]$tokens,
+                  [ref]$parseErrors
+              ) | Out-Null
+              if ($parseErrors.Count -gt 0) {
+                  $parseErrors | ForEach-Object { Write-Error $_.Message }
+                  throw "Invalid PowerShell: $($_.Name)"
+              }
+          }
+
       - name: HEMTT check
         run: hemtt check
 
       - name: HEMTT build
-        if: env.ARMA3_TOOLS_URL != ''
+        if: github.event_name != 'pull_request'
         run: hemtt build
 
       - name: HEMTT build without binarization
-        if: env.ARMA3_TOOLS_URL == ''
+        if: github.event_name == 'pull_request'
         run: hemtt build --no-bin
 
       - name: Upload Windows build
