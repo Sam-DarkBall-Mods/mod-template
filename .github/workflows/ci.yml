@@ -82,6 +82,26 @@ jobs:
       - name: Run tests
         run: python -B -m unittest discover -s tests -p "test_*.py" -v
 
+      - name: Validate release scripts
+        shell: pwsh
+        run: |
+          Get-ChildItem tools -Filter *.py | ForEach-Object {
+              python -m py_compile $_.FullName
+              if ($LASTEXITCODE -ne 0) { throw "Invalid Python: $($_.Name)" }
+          }
+
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path "tools/sign_release.ps1"),
+              [ref]$tokens,
+              [ref]$parseErrors
+          ) | Out-Null
+          if ($parseErrors.Count -gt 0) {
+              $parseErrors | ForEach-Object { Write-Error $_.Message }
+              throw "Invalid PowerShell release script"
+          }
+
       - name: HEMTT check
         run: hemtt check
 

@@ -1,5 +1,12 @@
 .DS_Store
 Thumbs.db
+*.bak
+*.bak.*
+*.back.*
+*.tmp
+*.orig
+*.rej
+* - Copy.*
 .hemttout/
 releases/
 @*/

@@ -33,17 +33,31 @@ jobs:
     name: Windows release
     needs: contract
     runs-on: windows-latest
+    environment: release-production
     env:
       ARMA3_TOOLS_URL: ${{ secrets.ARMA3_TOOLS_URL }}
+      BI_PRIVATE_KEY_B64: ${{ secrets.BI_PRIVATE_KEY_B64 }}
+      BI_PUBLIC_KEY_B64: ${{ secrets.BI_PUBLIC_KEY_B64 }}
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - name: Require Arma 3 Tools
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Require production tools and keys
         shell: pwsh
         run: |
           if ([string]::IsNullOrWhiteSpace($env:ARMA3_TOOLS_URL)) {
               throw "ARMA3_TOOLS_URL is required for production releases"
+          }
+          if ([string]::IsNullOrWhiteSpace($env:BI_PRIVATE_KEY_B64)) {
+              throw "BI_PRIVATE_KEY_B64 is required for production releases"
+          }
+          if ([string]::IsNullOrWhiteSpace($env:BI_PUBLIC_KEY_B64)) {
+              throw "BI_PUBLIC_KEY_B64 is required for production releases"
           }
 
       - name: Set up HEMTT
@@ -54,8 +68,15 @@ jobs:
         with:
           toolsUrl: ${{ secrets.ARMA3_TOOLS_URL }}
 
-      - name: Build signed release
-        run: hemtt release
+      - name: Build binarized release
+        run: hemtt release --no-sign
+
+      - name: Sign release with stable BI key
+        shell: pwsh
+        run: ./tools/sign_release.ps1
+
+      - name: Repack signed release
+        run: python -B tools/package_release.py
 
       - name: Verify PBO signatures
         shell: pwsh

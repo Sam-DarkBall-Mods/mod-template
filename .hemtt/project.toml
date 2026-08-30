@@ -15,6 +15,26 @@ include = [
     "mod.cpp",
 ]
 
+exclude = [
+    "**/.DS_Store",
+    "**/Thumbs.db",
+    "**/*.bak",
+    "**/*.bak.*",
+    "**/*.back.*",
+    "**/*.tmp",
+    "**/*.orig",
+    "**/*.rej",
+    "**/* - Copy.*",
+    "**/*.psd",
+    "**/*.psb",
+    "**/*.xcf",
+    "**/*.blend",
+    "**/*.blend1",
+    "**/.gitkeep",
+    "addons/**/README*",
+    "optionals/**/README*",
+]
+
 [version]
 major = 1
 minor = 0
