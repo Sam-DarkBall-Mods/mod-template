@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
+import re
 import sys
 from pathlib import Path
 
@@ -39,6 +41,7 @@ REQUIRED_PACKAGE_EXCLUDES = (
     "**/*.blend1",
     "**/.gitkeep",
 )
+SIGNING_AUTHORITY = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 def source_files() -> list[Path]:
@@ -86,6 +89,29 @@ def main() -> int:
         if is_forbidden_package_file(path):
             relative = path.relative_to(ROOT)
             errors.append(f"{relative}: backup or authoring file is not allowed in an addon")
+
+    for path in ROOT.rglob("*.biprivatekey"):
+        relative = path.relative_to(ROOT)
+        if not IGNORED_PARTS.intersection(relative.parts):
+            errors.append(f"{relative}: private signing keys must not be committed")
+
+    signing_path = ROOT / "tools" / "signing.json"
+    if signing_path.is_file():
+        try:
+            signing = json.loads(signing_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            errors.append(f"tools/signing.json: {error}")
+        else:
+            if not isinstance(signing, dict) or not isinstance(signing.get("pbos", {}), dict):
+                errors.append("tools/signing.json: expected an object with a pbos object")
+            else:
+                authorities = [signing.get("default"), *signing.get("pbos", {}).values()]
+                for authority in authorities:
+                    if not isinstance(authority, str) or not SIGNING_AUTHORITY.fullmatch(authority):
+                        errors.append("tools/signing.json: invalid signing authority")
+                        continue
+                    if not (ROOT / "keys" / f"{authority}.bikey").is_file():
+                        errors.append(f"keys/{authority}.bikey: committed public key is missing")
 
     project = (ROOT / ".hemtt" / "project.toml").read_text(encoding="utf-8")
     for pattern in REQUIRED_PACKAGE_EXCLUDES:

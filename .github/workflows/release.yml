@@ -46,10 +46,10 @@ jobs:
       - name: Require production key
         shell: pwsh
         env:
-          BI_PRIVATE_KEY_B64: ${{ secrets.BI_PRIVATE_KEY_B64 }}
+          BI_PRIVATE_KEYS_JSON: ${{ secrets.BI_PRIVATE_KEYS_JSON }}
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:BI_PRIVATE_KEY_B64)) {
-              throw "BI_PRIVATE_KEY_B64 is required for production releases"
+          if ([string]::IsNullOrWhiteSpace($env:BI_PRIVATE_KEYS_JSON)) {
+              throw "BI_PRIVATE_KEYS_JSON is required for production releases"
           }
 
       - name: Set up HEMTT
@@ -71,7 +71,7 @@ jobs:
       - name: Sign release with stable BI key
         shell: pwsh
         env:
-          BI_PRIVATE_KEY_B64: ${{ secrets.BI_PRIVATE_KEY_B64 }}
+          BI_PRIVATE_KEYS_JSON: ${{ secrets.BI_PRIVATE_KEYS_JSON }}
         run: ./tools/sign_release.ps1
 
       - name: Repack signed release
@@ -82,12 +82,16 @@ jobs:
         run: |
           $pbos = Get-ChildItem .hemttout\release -Recurse -Filter *.pbo
           if ($pbos.Count -eq 0) { throw "No release PBOs found" }
-          $keys = @(Get-ChildItem .hemttout\release\keys -File -Filter *.bikey -ErrorAction SilentlyContinue)
-          if ($keys.Count -ne 1) { throw "Expected exactly one packaged public key" }
           foreach ($pbo in $pbos) {
               $signatures = @(Get-ChildItem "$($pbo.FullName).*bisign" -ErrorAction SilentlyContinue)
               if ($signatures.Count -ne 1) { throw "Expected exactly one signature for $($pbo.Name)" }
-              hemtt utils verify $pbo.FullName $keys[0].FullName
+              $suffix = $signatures[0].Name.Substring($pbo.Name.Length + 1)
+              $authority = $suffix.Substring(0, $suffix.Length - ".bisign".Length)
+              if ($authority -notmatch '^[A-Za-z0-9._-]+$') { throw "Invalid signing authority" }
+              $modRoot = Split-Path $pbo.Directory.FullName -Parent
+              $key = Join-Path $modRoot "keys\$authority.bikey"
+              if (-not (Test-Path $key)) { throw "Missing public key for $($pbo.Name)" }
+              hemtt utils verify $pbo.FullName $key
               if ($LASTEXITCODE -ne 0) { throw "Signature verification failed for $($pbo.Name)" }
           }
 

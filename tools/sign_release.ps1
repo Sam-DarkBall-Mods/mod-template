@@ -3,8 +3,8 @@ $ErrorActionPreference = "Stop"
 $releaseRoot = Join-Path $PWD ".hemttout\release"
 $toolsRoot = "C:\arma3tools"
 $dssign = Join-Path $toolsRoot "DSSignFile\DSSignFile.exe"
-$privateKeyPath = Join-Path $env:RUNNER_TEMP "release.biprivatekey"
-$publicKeys = @(Get-ChildItem (Join-Path $PWD "keys") -File -Filter "*.bikey" -ErrorAction SilentlyContinue)
+$signingConfigPath = Join-Path $PWD "tools\signing.json"
+$privateKeysRoot = Join-Path $env:RUNNER_TEMP "release-private-keys"
 
 if (-not (Test-Path $releaseRoot)) {
     throw "HEMTT release folder not found"
@@ -12,64 +12,117 @@ if (-not (Test-Path $releaseRoot)) {
 if (-not (Test-Path $dssign)) {
     throw "DSSignFile.exe not found in Arma 3 Tools"
 }
-if ([string]::IsNullOrWhiteSpace($env:BI_PRIVATE_KEY_B64)) {
-    throw "BI_PRIVATE_KEY_B64 is required"
+if (-not (Test-Path $signingConfigPath)) {
+    throw "tools/signing.json not found"
 }
-if ($publicKeys.Count -ne 1) {
-    throw "Exactly one committed public key is required in keys"
+if ([string]::IsNullOrWhiteSpace($env:BI_PRIVATE_KEYS_JSON)) {
+    throw "BI_PRIVATE_KEYS_JSON is required"
 }
 
 try {
-    [IO.File]::WriteAllBytes(
-        $privateKeyPath,
-        [Convert]::FromBase64String($env:BI_PRIVATE_KEY_B64.Trim())
-    )
-    $env:BI_PRIVATE_KEY_B64 = $null
+    $signingConfig = Get-Content $signingConfigPath -Raw |
+        ConvertFrom-Json -AsHashtable
+    $privateKeys = $env:BI_PRIVATE_KEYS_JSON |
+        ConvertFrom-Json -AsHashtable
+    $env:BI_PRIVATE_KEYS_JSON = $null
 
-    $publicKeyPath = $publicKeys[0].FullName
-    $releaseKeyDirectories = @((Join-Path $releaseRoot "keys"))
-    $optionalsRoot = Join-Path $releaseRoot "optionals"
-    if (Test-Path $optionalsRoot) {
-        $releaseKeyDirectories += @(Get-ChildItem $optionalsRoot -Directory | ForEach-Object {
-            Join-Path $_.FullName "keys"
-        })
+    if ($signingConfig -isnot [Collections.IDictionary]) {
+        throw "Signing config must be a JSON object"
+    }
+    if ($privateKeys -isnot [Collections.IDictionary]) {
+        throw "BI_PRIVATE_KEYS_JSON must be a JSON object"
     }
 
-    foreach ($releaseKeysRoot in $releaseKeyDirectories) {
-        $releaseKeyPath = Join-Path $releaseKeysRoot $publicKeys[0].Name
-        New-Item -ItemType Directory -Force -Path $releaseKeysRoot | Out-Null
-        if (Test-Path $releaseKeyPath) {
-            if ((Get-FileHash $publicKeyPath).Hash -ne (Get-FileHash $releaseKeyPath).Hash) {
-                throw "Release public key differs from the committed public key"
-            }
-        } else {
-            Copy-Item $publicKeyPath $releaseKeyPath
-        }
-        $releasePublicKeys = @(Get-ChildItem $releaseKeysRoot -File -Filter "*.bikey")
-        if ($releasePublicKeys.Count -ne 1) {
-            throw "Exactly one public key is required in $releaseKeysRoot"
-        }
+    $defaultAuthority = [string]$signingConfig["default"]
+    if ([string]::IsNullOrWhiteSpace($defaultAuthority)) {
+        throw "Signing config requires a default authority"
     }
 
-    $releasePublicKeyPath = Join-Path $releaseKeyDirectories[0] $publicKeys[0].Name
-    $inspection = (& hemtt utils inspect $releasePublicKeyPath 2>&1 | Out-String)
-    $authorityMatch = [regex]::Match(
-        $inspection,
-        "(?m)^\s*-\s*Authority:\s*(\S+)\s*$"
-    )
-    if (-not $authorityMatch.Success) {
-        throw "Could not read authority from BI public key"
+    $pboOverrides = $signingConfig["pbos"]
+    if ($null -eq $pboOverrides) {
+        $pboOverrides = @{}
+    }
+    if ($pboOverrides -isnot [Collections.IDictionary]) {
+        throw "Signing config pbos must be a JSON object"
     }
 
-    $authority = $authorityMatch.Groups[1].Value
-
-    $pbos = @(Get-ChildItem $releaseRoot -Recurse -Filter "*.pbo")
+    $pbos = @(Get-ChildItem $releaseRoot -Recurse -File -Filter "*.pbo")
     if ($pbos.Count -eq 0) {
         throw "No release PBOs found"
     }
 
+    foreach ($pboName in $pboOverrides.Keys) {
+        if ($pboName -notin $pbos.Name) {
+            throw "Signing config references missing PBO: $pboName"
+        }
+    }
+
+    $authoritiesByPbo = @{}
     foreach ($pbo in $pbos) {
-        Get-ChildItem "$($pbo.FullName).*bisign" -ErrorAction SilentlyContinue |
+        $authority = $defaultAuthority
+        if ($pboOverrides.ContainsKey($pbo.Name)) {
+            $authority = [string]$pboOverrides[$pbo.Name]
+        }
+        if ($authority -notmatch '^[A-Za-z0-9._-]+$') {
+            throw "Invalid signing authority for $($pbo.Name)"
+        }
+        $authoritiesByPbo[$pbo.FullName] = $authority
+    }
+
+    $usedAuthorities = @($authoritiesByPbo.Values | Sort-Object -Unique)
+    $publicKeys = @{}
+    $privateKeyPaths = @{}
+    New-Item -ItemType Directory -Path $privateKeysRoot | Out-Null
+
+    foreach ($authority in $usedAuthorities) {
+        $publicKeyPath = Join-Path $PWD "keys\$authority.bikey"
+        if (-not (Test-Path $publicKeyPath)) {
+            throw "Missing committed public key: $authority.bikey"
+        }
+
+        $inspection = (& hemtt utils inspect $publicKeyPath 2>&1 | Out-String)
+        $authorityMatch = [regex]::Match(
+            $inspection,
+            "(?m)^\s*-\s*Authority:\s*(\S+)\s*$"
+        )
+        if (-not $authorityMatch.Success) {
+            throw "Could not inspect public key: $authority.bikey"
+        }
+        if ($authorityMatch.Groups[1].Value -cne $authority) {
+            throw "Public key authority does not match $authority.bikey"
+        }
+        if (-not $privateKeys.ContainsKey($authority)) {
+            throw "Missing private key secret for $authority"
+        }
+
+        $privateKeyPath = Join-Path $privateKeysRoot "$authority.biprivatekey"
+        [IO.File]::WriteAllBytes(
+            $privateKeyPath,
+            [Convert]::FromBase64String(([string]$privateKeys[$authority]).Trim())
+        )
+
+        $publicKeys[$authority] = $publicKeyPath
+        $privateKeyPaths[$authority] = $privateKeyPath
+    }
+
+    foreach ($pbo in $pbos) {
+        $authority = $authoritiesByPbo[$pbo.FullName]
+        $publicKeyPath = $publicKeys[$authority]
+        $privateKeyPath = $privateKeyPaths[$authority]
+        $modRoot = Split-Path $pbo.Directory.FullName -Parent
+        $releaseKeysRoot = Join-Path $modRoot "keys"
+        $releasePublicKeyPath = Join-Path $releaseKeysRoot "$authority.bikey"
+
+        New-Item -ItemType Directory -Force -Path $releaseKeysRoot | Out-Null
+        if (Test-Path $releasePublicKeyPath) {
+            if ((Get-FileHash $publicKeyPath).Hash -ne (Get-FileHash $releasePublicKeyPath).Hash) {
+                throw "Release public key differs from $authority.bikey"
+            }
+        } else {
+            Copy-Item $publicKeyPath $releasePublicKeyPath
+        }
+
+        Get-ChildItem "$($pbo.FullName).*bisign" -File -ErrorAction SilentlyContinue |
             Remove-Item -Force
 
         & $dssign $privateKeyPath $pbo.FullName
@@ -77,10 +130,9 @@ try {
             throw "DSSignFile failed for $($pbo.Name)"
         }
 
-        $signature = Get-ChildItem "$($pbo.FullName).*bisign" |
-            Select-Object -First 1
-        if ($null -eq $signature) {
-            throw "DSSignFile did not create a signature for $($pbo.Name)"
+        $signatures = @(Get-ChildItem "$($pbo.FullName).*bisign" -File -ErrorAction SilentlyContinue)
+        if ($signatures.Count -ne 1) {
+            throw "Expected one signature for $($pbo.Name)"
         }
 
         hemtt utils verify $pbo.FullName $releasePublicKeyPath
@@ -89,9 +141,9 @@ try {
         }
     }
 
-    Write-Host "Signed $($pbos.Count) PBO(s) with $authority"
+    Write-Host "Signed $($pbos.Count) PBO(s) with $($usedAuthorities -join ', ')"
 }
 finally {
-    $env:BI_PRIVATE_KEY_B64 = $null
-    Remove-Item $privateKeyPath -Force -ErrorAction SilentlyContinue
+    $env:BI_PRIVATE_KEYS_JSON = $null
+    Remove-Item $privateKeysRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
