@@ -34,10 +34,6 @@ jobs:
     needs: contract
     runs-on: windows-latest
     environment: release-production
-    env:
-      ARMA3_TOOLS_URL: ${{ secrets.ARMA3_TOOLS_URL }}
-      BI_PRIVATE_KEY_B64: ${{ secrets.BI_PRIVATE_KEY_B64 }}
-      BI_PUBLIC_KEY_B64: ${{ secrets.BI_PUBLIC_KEY_B64 }}
     steps:
       - name: Checkout
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -47,32 +43,33 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Require production tools and keys
+      - name: Require production key
         shell: pwsh
+        env:
+          BI_PRIVATE_KEY_B64: ${{ secrets.BI_PRIVATE_KEY_B64 }}
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:ARMA3_TOOLS_URL)) {
-              throw "ARMA3_TOOLS_URL is required for production releases"
-          }
           if ([string]::IsNullOrWhiteSpace($env:BI_PRIVATE_KEY_B64)) {
               throw "BI_PRIVATE_KEY_B64 is required for production releases"
-          }
-          if ([string]::IsNullOrWhiteSpace($env:BI_PUBLIC_KEY_B64)) {
-              throw "BI_PUBLIC_KEY_B64 is required for production releases"
           }
 
       - name: Set up HEMTT
         uses: arma-actions/hemtt@a0570ddd80d2b7be9c0f052494c0f700b42668dd # v1
+        with:
+          version: "v1.21.0"
 
       - name: Set up Arma 3 Tools
-        uses: arma-actions/arma3-tools@7a1666b84a58503702f56319d8ffa975ec8a463e # master 2025-02-04
-        with:
-          toolsUrl: ${{ secrets.ARMA3_TOOLS_URL }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.BUILD_ASSETS_TOKEN }}
+        run: ./tools/setup_arma3_tools.ps1
 
       - name: Build binarized release
         run: hemtt release --no-sign
 
       - name: Sign release with stable BI key
         shell: pwsh
+        env:
+          BI_PRIVATE_KEY_B64: ${{ secrets.BI_PRIVATE_KEY_B64 }}
         run: ./tools/sign_release.ps1
 
       - name: Repack signed release
@@ -83,14 +80,12 @@ jobs:
         run: |
           $pbos = Get-ChildItem .hemttout\release -Recurse -Filter *.pbo
           if ($pbos.Count -eq 0) { throw "No release PBOs found" }
+          $keys = @(Get-ChildItem .hemttout\release\keys -File -Filter *.bikey -ErrorAction SilentlyContinue)
+          if ($keys.Count -ne 1) { throw "Expected exactly one packaged public key" }
           foreach ($pbo in $pbos) {
-              $signature = Get-ChildItem "$($pbo.FullName).*bisign" | Select-Object -First 1
-              if ($null -eq $signature) { throw "Missing signature for $($pbo.Name)" }
-              $suffix = $signature.Name.Substring($pbo.Name.Length + 1)
-              $authority = $suffix.Substring(0, $suffix.Length - ".bisign".Length)
-              $key = Get-ChildItem .hemttout\release -Recurse -Filter "$authority.bikey" | Select-Object -First 1
-              if ($null -eq $key) { throw "Missing public key for $authority" }
-              hemtt utils verify $pbo.FullName $key.FullName
+              $signatures = @(Get-ChildItem "$($pbo.FullName).*bisign" -ErrorAction SilentlyContinue)
+              if ($signatures.Count -ne 1) { throw "Expected exactly one signature for $($pbo.Name)" }
+              hemtt utils verify $pbo.FullName $keys[0].FullName
               if ($LASTEXITCODE -ne 0) { throw "Signature verification failed for $($pbo.Name)" }
           }
 
